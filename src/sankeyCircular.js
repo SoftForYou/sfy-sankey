@@ -1,7 +1,6 @@
 /// https://github.com/tomshanley/d3-sankeyCircular-circular
 // fork of https://github.com/d3/d3-sankeyCircular copyright Mike Bostock
-import {ascending, min, max, mean, sum} from "d3-array";
-import {map, nest} from "d3-collection";
+import {ascending, min, max, mean, sum, group} from "d3-array";
 import {justify} from "./align";
 import constant from "./constant";
 import {linkHorizontal} from "d3-shape";
@@ -54,6 +53,20 @@ import findCircuits from "elementary-circuits-directed-graph";
     return id(node)
   }
 
+  // sort nodes' breadth (ie top to bottom in a column) — module-level version
+  // used by resolveNodesOverlap which is outside the sankeyCircular closure
+  function ascendingBreadthModule (a, b) {
+    if (a.partOfCycle === b.partOfCycle) {
+      return a.y0 - b.y0
+    } else {
+      if (a.circularLinkType === 'top' || b.circularLinkType === 'bottom') {
+        return -1
+      } else {
+        return 1
+      }
+    }
+  }
+
   // The main sankeyCircular functions
 
   // Some constants for circular link calculations
@@ -61,6 +74,11 @@ import findCircuits from "elementary-circuits-directed-graph";
   var baseRadius = 10;
   var scale = 0.3; //Possibly let user control this, although anything over 0.5 starts to get too cramped
 
+  /**
+   * Creates a new sankey layout generator with circular link support.
+   * Returns a configurable function that computes node and link positions.
+   * @returns {Function} A sankey layout function with chainable getters/setters.
+   */
   export default function() {
     // Set the default values
     var x0 = 0,
@@ -85,36 +103,52 @@ import findCircuits from "elementary-circuits-directed-graph";
         links: links.apply(null, arguments)
       }
 
+      // Validate input
+      if (!Array.isArray(graph.nodes)) {
+        throw new Error('sankey.nodes must return an array')
+      }
+      if (!Array.isArray(graph.links)) {
+        throw new Error('sankey.links must return an array')
+      }
+      graph.links.forEach(function (link, i) {
+        if (link.source == null || link.target == null) {
+          throw new Error('link at index ' + i + ' is missing source or target')
+        }
+        if (typeof link.value !== 'number' || link.value < 0) {
+          throw new Error('link at index ' + i + ' must have a non-negative numeric value')
+        }
+      })
+
       // Process the graph's nodes and links, setting their positions
 
-      // 1.  Associate the nodes with their respective links, and vice versa
+      // 1. Associate the nodes with their respective links, and vice versa
       computeNodeLinks(graph)
 
-      // 2.  Determine which links result in a circular path in the graph
+      // 2. Determine which links result in a circular path in the graph
       identifyCircles(graph, id, sortNodes)
 
-      // 4. Calculate the nodes' values, based on the values of the incoming and outgoing links
+      // 3. Calculate the nodes' values, based on the values of the incoming and outgoing links
       computeNodeValues(graph)
 
-      // 5.  Calculate the nodes' depth based on the incoming and outgoing links
-      //     Sets the nodes':
-      //     - depth:  the depth in the graph
-      //     - column: the depth (0, 1, 2, etc), as is relates to visual position from left to right
-      //     - x0, x1: the x coordinates, as is relates to visual position from left to right
+      // 4. Calculate the nodes' depth based on the incoming and outgoing links
+      //    Sets the nodes':
+      //    - depth:  the depth in the graph
+      //    - column: the depth (0, 1, 2, etc), as is relates to visual position from left to right
+      //    - x0, x1: the x coordinates, as is relates to visual position from left to right
       computeNodeDepths(graph)
 
-      // 3.  Determine how the circular links will be drawn,
-      //     either travelling back above the main chart ("top")
-      //     or below the main chart ("bottom")
+      // 5. Determine how the circular links will be drawn,
+      //    either travelling back above the main chart ("top")
+      //    or below the main chart ("bottom")
       selectCircularLinkTypes(graph, id)
 
-      // 6.  Calculate the nodes' and links' vertical position within their respective column
-      //     Also readjusts sankeyCircular size if circular links are needed, and node x's
+      // 6. Calculate the nodes' and links' vertical position within their respective column
+      //    Also readjusts sankeyCircular size if circular links are needed, and node x's
       computeNodeBreadths(graph, iterations, id)
       computeLinkBreadths(graph)
 
-      // 7.  Sort links per node, based on the links' source/target nodes' breadths
-      // 8.  Adjust nodes that overlap links that span 2+ columns
+      // 7. Sort links per node, based on the links' source/target nodes' breadths
+      // 8. Adjust nodes that overlap links that span 2+ columns
       var linkSortingIterations = 4; //Possibly let user control this number, like the iterations over node placement
       for (var iteration = 0; iteration < linkSortingIterations; iteration++) {
 
@@ -132,7 +166,7 @@ import findCircuits from "elementary-circuits-directed-graph";
       // 8.2  Adjust node and link positions back to fill height of chart area if compressed
       fillHeight(graph, y0, y1)
 
-      // 9. Calculate visually appealling path for the circular paths, and create the "d" string
+      // 9. Calculate visually appealing path for the circular paths, and create the "d" string
       addCircularPathData(graph, circularLinkGap, y1, id)
 
       return graph
@@ -234,21 +268,12 @@ import findCircuits from "elementary-circuits-directed-graph";
     };
 
     sankeyCircular.update = function(graph) {
-      // 5.  Calculate the nodes' depth based on the incoming and outgoing links
-      //     Sets the nodes':
-      //     - depth:  the depth in the graph
-      //     - column: the depth (0, 1, 2, etc), as is relates to visual position from left to right
-      //     - x0, x1: the x coordinates, as is relates to visual position from left to right
-      // computeNodeDepths(graph)
-
-      // 3.  Determine how the circular links will be drawn,
-      //     either travelling back above the main chart ("top")
-      //     or below the main chart ("bottom")
+      // 5. Determine how the circular links will be drawn,
+      //    either travelling back above the main chart ("top")
+      //    or below the main chart ("bottom")
       selectCircularLinkTypes(graph, id)
 
-      // 6.  Calculate the nodes' and links' vertical position within their respective column
-      //     Also readjusts sankeyCircular size if circular links are needed, and node x's
-      // computeNodeBreadths(graph, iterations, id)
+      // 6. Calculate the nodes' and links' vertical position within their respective column
       computeLinkBreadths(graph)
 
       // Force position of circular link type based on position
@@ -266,23 +291,7 @@ import findCircuits from "elementary-circuits-directed-graph";
       sortSourceLinks(graph, y1, id, false) // Sort links but do not move nodes
       sortTargetLinks(graph, y1, id)
 
-      // 7.  Sort links per node, based on the links' source/target nodes' breadths
-      // 8.  Adjust nodes that overlap links that span 2+ columns
-      // var linkSortingIterations = 4; //Possibly let user control this number, like the iterations over node placement
-      // for (var iteration = 0; iteration < linkSortingIterations; iteration++) {
-      //
-      //   sortSourceLinks(graph, y1, id)
-      //   sortTargetLinks(graph, y1, id)
-      //   resolveNodeLinkOverlaps(graph, y0, y1, id)
-      //   sortSourceLinks(graph, y1, id)
-      //   sortTargetLinks(graph, y1, id)
-      //
-      // }
-
-      // 8.1  Adjust node and link positions back to fill height of chart area if compressed
-      // fillHeight(graph, y0, y1)
-
-      // 9. Calculate visually appealling path for the circular paths, and create the "d" string
+      // 9. Calculate visually appealing path for the circular paths, and create the "d" string
       addCircularPathData(graph, circularLinkGap, y1, id)
       return graph
     }
@@ -295,7 +304,7 @@ import findCircuits from "elementary-circuits-directed-graph";
         node.sourceLinks = []
         node.targetLinks = []
       })
-      var nodeById = map(graph.nodes, id)
+      var nodeById = new Map(graph.nodes.map(function (d) { return [id(d), d] }))
       graph.links.forEach(function (link, i) {
         link.index = i
         var source = link.source
@@ -347,17 +356,17 @@ import findCircuits from "elementary-circuits-directed-graph";
 
       graph.links.forEach(function (link) {
         if (link.circular) {
-          if (link.circularLinkType == 'top') {
+          if (link.circularLinkType === 'top') {
             totalTopLinksWidth = totalTopLinksWidth + link.width
           } else {
             totalBottomLinksWidth = totalBottomLinksWidth + link.width
           }
 
-          if (link.target.column == 0) {
+          if (link.target.column === 0) {
             totalLeftLinksWidth = totalLeftLinksWidth + link.width
           }
 
-          if (link.source.column == maxColumn) {
+          if (link.source.column === maxColumn) {
             totalRightLinksWidth = totalRightLinksWidth + link.width
           }
         }
@@ -390,7 +399,7 @@ import findCircuits from "elementary-circuits-directed-graph";
       var scaleY = currentHeight / newHeight;
 
       x0 = (x0 * scaleX) + (margin.left);
-      x1 = margin.right == 0 ? x1 : x1 * scaleX;
+      x1 = margin.right === 0 ? x1 : x1 * scaleX;
       y0 = (y0 * scaleY) + (margin.top);
       y1 = y1 * scaleY;
 
@@ -450,15 +459,9 @@ import findCircuits from "elementary-circuits-directed-graph";
 
     // Assign nodes' breadths, and then shift nodes that overlap (resolveCollisions)
     function computeNodeBreadths (graph, iterations, id) {
-      var columns = nest()
-        .key(function (d) {
-          return d.column
-        })
-        .sortKeys(ascending)
-        .entries(graph.nodes)
-        .map(function (d) {
-          return d.values
-        })
+      var columns = Array.from(group(graph.nodes, function (d) { return d.column }))
+        .sort(function (a, b) { return ascending(a[0], b[0]) })
+        .map(function (d) { return d[1] })
 
       initializeNodeBreadth(id)
       resolveCollisions()
@@ -505,17 +508,17 @@ import findCircuits from "elementary-circuits-directed-graph";
         columns.forEach(function (nodes) {
           var nodesLength = nodes.length
           nodes.forEach(function (node, i) {
-            if (node.depth == (columns.length - 1) && nodesLength == 1) {
+            if (node.depth === (columns.length - 1) && nodesLength === 1) {
               node.y0 = y1 / 2 - (node.value * ky)
               node.y1 = node.y0 + node.value * ky
-            } else if (node.depth == 0 && nodesLength == 1) {
+            } else if (node.depth === 0 && nodesLength === 1) {
               node.y0 = y1 / 2 - (node.value * ky)
               node.y1 = node.y0 + node.value * ky
             } else if (node.partOfCycle) {
-              if (numberOfNonSelfLinkingCycles(node, id) == 0) {
+              if (numberOfNonSelfLinkingCycles(node, id) === 0) {
                 node.y0 = y1 / 2 + i
                 node.y1 = node.y0 + node.value * ky
-              } else if (node.circularLinkType == 'top') {
+              } else if (node.circularLinkType === 'top') {
                 node.y0 = y0 + i
                 node.y1 = node.y0 + node.value * ky
               } else {
@@ -523,7 +526,7 @@ import findCircuits from "elementary-circuits-directed-graph";
                 node.y1 = node.y0 + node.value * ky
               }
             } else {
-              if (margin.top == 0 || margin.bottom == 0) {
+              if (margin.top === 0 || margin.bottom === 0) {
                 node.y0 = ((y1 - y0) / nodesLength) * i
                 node.y1 = node.y0 + node.value * ky
               } else {
@@ -550,10 +553,14 @@ import findCircuits from "elementary-circuits-directed-graph";
                 node.y1 = y1 / 2 + nodeHeight / 2
                 var avg = 0
       
+                // avgTargetY: where this node's targets are pulling it towards
+                // (computed from sourceLinks, because those links go TO targets)
                 var avgTargetY = mean(
                   node.sourceLinks,
                   linkTargetCenter
                 )
+                // avgSourceY: where this node's sources are pulling it towards
+                // (computed from targetLinks, because those links come FROM sources)
                 var avgSourceY = mean(
                   node.targetLinks,
                   linkSourceCenter
@@ -732,14 +739,14 @@ import findCircuits from "elementary-circuits-directed-graph";
             : 'bottom'
         }
 
-        if (link.circularLinkType == 'top') {
+        if (link.circularLinkType === 'top') {
           numberOfTops = numberOfTops + 1
         } else {
           numberOfBottoms = numberOfBottoms + 1
         }
 
         graph.nodes.forEach(function (node) {
-          if (getNodeID(node, id) == getNodeID(link.source, id) || getNodeID(node, id) == getNodeID(link.target, id)) {
+          if (getNodeID(node, id) === getNodeID(link.source, id) || getNodeID(node, id) === getNodeID(link.target, id)) {
             node.circularLinkType = link.circularLinkType
           }
         })
@@ -750,7 +757,7 @@ import findCircuits from "elementary-circuits-directed-graph";
     graph.links.forEach(function (link) {
       if (link.circular) {
         //if both source and target node are same type, then link should have same type
-        if (link.source.circularLinkType == link.target.circularLinkType) {
+        if (link.source.circularLinkType === link.target.circularLinkType) {
           link.circularLinkType = link.source.circularLinkType
         }
         //if link is selflinking, then link should have same type as node
@@ -760,19 +767,6 @@ import findCircuits from "elementary-circuits-directed-graph";
       }
     })
 
-  }
-
-  // Given a node, find all links for which this is a source in the current 'known' graph
-  function findLinksOutward (node, graph) {
-    var children = []
-
-    for (var i = 0; i < graph.length; i++) {
-      if (node == graph[i].source) {
-        children.push(graph[i])
-      }
-    }
-
-    return children
   }
 
   // Return the angle between a straight line between the source and target of the link, and the vertical plane of the node
@@ -844,7 +838,7 @@ import findCircuits from "elementary-circuits-directed-graph";
         link.circularPathData.verticalBuffer = buffer + link.width / 2
       } else {
         var j = 0
-        for (j; j < i; j++) {
+        for (; j < i; j++) {
           if (circularLinksCross(links[i], links[j])) {
             var bufferOverThisLink =
               links[j].circularPathData.verticalBuffer +
@@ -862,10 +856,16 @@ import findCircuits from "elementary-circuits-directed-graph";
   }
 
   // calculate the optimum path for a link to reduce overlaps
- export function addCircularPathData (graph, circularLinkGap, y1, id) {
-    //var baseRadius = 10
+ /**
+ * Computes SVG path data for circular links and standard link paths.
+ * Mutates each link, adding `circularPathData` and `path` properties.
+ * @param {Object} graph - The sankey graph with computed node/link positions.
+ * @param {number} circularLinkGap - Gap between adjacent circular links.
+ * @param {number} y1 - The bottom extent of the layout area.
+ * @param {Function} id - The node id accessor function.
+ */
+export function addCircularPathData (graph, circularLinkGap, y1, id) {
     var buffer = 5
-    //var verticalMargin = 25
 
     var minY = min(graph.links, function (link) {
       return link.source.y0
@@ -880,14 +880,33 @@ import findCircuits from "elementary-circuits-directed-graph";
 
     // calc vertical offsets per top/bottom links
     var topLinks = graph.links.filter(function (l) {
-      return l.circularLinkType == 'top'
+      return l.circularLinkType === 'top'
     })
     /* topLinks = */ calcVerticalBuffer(topLinks, circularLinkGap, id)
 
     var bottomLinks = graph.links.filter(function (l) {
-      return l.circularLinkType == 'bottom'
+      return l.circularLinkType === 'bottom'
     })
     /* bottomLinks = */ calcVerticalBuffer(bottomLinks, circularLinkGap, id)
+
+    // Pre-build lookup maps for O(1) access by column:circularLinkType
+    var sourceColumnMap = new Map()
+    var targetColumnMap = new Map()
+    graph.links.forEach(function (l) {
+      if (l.circular) {
+        var sourceKey = l.source.column + ':' + l.circularLinkType
+        if (!sourceColumnMap.has(sourceKey)) {
+          sourceColumnMap.set(sourceKey, [])
+        }
+        sourceColumnMap.get(sourceKey).push(l)
+
+        var targetKey = l.target.column + ':' + l.circularLinkType
+        if (!targetColumnMap.has(targetKey)) {
+          targetColumnMap.set(targetKey, [])
+        }
+        targetColumnMap.get(targetKey).push(l)
+      }
+    })
 
     // add the base data for each link
     graph.links.forEach(function (link) {
@@ -908,7 +927,7 @@ import findCircuits from "elementary-circuits-directed-graph";
           link.circularPathData.rightSmallArcRadius = baseRadius + link.width / 2
           link.circularPathData.rightLargeArcRadius = baseRadius + link.width / 2
 
-          if (link.circularLinkType == 'bottom') {
+          if (link.circularLinkType === 'bottom') {
             link.circularPathData.verticalFullExtent = link.source.y1 + verticalMargin + link.circularPathData.verticalBuffer
             link.circularPathData.verticalLeftInnerExtent = link.circularPathData.verticalFullExtent - link.circularPathData.leftLargeArcRadius
             link.circularPathData.verticalRightInnerExtent = link.circularPathData.verticalFullExtent - link.circularPathData.rightLargeArcRadius
@@ -923,14 +942,10 @@ import findCircuits from "elementary-circuits-directed-graph";
           // add left extent coordinates, based on links with same source column and circularLink type
           var thisColumn = link.source.column
           var thisCircularLinkType = link.circularLinkType
-          var sameColumnLinks = graph.links.filter(function (l) {
-            return (
-              l.source.column == thisColumn &&
-              l.circularLinkType == thisCircularLinkType
-            )
-          })
+          var sourceKey = thisColumn + ':' + thisCircularLinkType
+          var sameColumnLinks = (sourceColumnMap.get(sourceKey) || []).slice()
 
-          if (link.circularLinkType == 'bottom') {
+          if (link.circularLinkType === 'bottom') {
             sameColumnLinks.sort(sortLinkSourceYDescending)
           } else {
             sameColumnLinks.sort(sortLinkSourceYAscending)
@@ -938,7 +953,7 @@ import findCircuits from "elementary-circuits-directed-graph";
 
           var radiusOffset = 0
           sameColumnLinks.forEach(function (l, i) {
-            if (l.circularLinkID == link.circularLinkID) {
+            if (l.circularLinkID === link.circularLinkID) {
               link.circularPathData.leftSmallArcRadius = baseRadius + link.width / 2 + radiusOffset
               link.circularPathData.leftLargeArcRadius = baseRadius + link.width / 2 + i * circularLinkGap + radiusOffset
             }
@@ -947,13 +962,9 @@ import findCircuits from "elementary-circuits-directed-graph";
 
           // add right extent coordinates, based on links with same target column and circularLink type
           thisColumn = link.target.column
-          sameColumnLinks = graph.links.filter(function (l) {
-            return (
-              l.target.column == thisColumn &&
-              l.circularLinkType == thisCircularLinkType
-            )
-          })
-          if (link.circularLinkType == 'bottom') {
+          var targetKey = thisColumn + ':' + thisCircularLinkType
+          sameColumnLinks = (targetColumnMap.get(targetKey) || []).slice()
+          if (link.circularLinkType === 'bottom') {
             sameColumnLinks.sort(sortLinkTargetYDescending)
           } else {
             sameColumnLinks.sort(sortLinkTargetYAscending)
@@ -961,7 +972,7 @@ import findCircuits from "elementary-circuits-directed-graph";
 
           radiusOffset = 0
           sameColumnLinks.forEach(function (l, i) {
-            if (l.circularLinkID == link.circularLinkID) {
+            if (l.circularLinkID === link.circularLinkID) {
               link.circularPathData.rightSmallArcRadius = baseRadius + link.width / 2 + radiusOffset
               link.circularPathData.rightLargeArcRadius = baseRadius + link.width / 2 + i * circularLinkGap + radiusOffset
             }
@@ -969,7 +980,7 @@ import findCircuits from "elementary-circuits-directed-graph";
           })
 
           // bottom links
-          if (link.circularLinkType == 'bottom') {
+          if (link.circularLinkType === 'bottom') {
             link.circularPathData.verticalFullExtent = Math.max(y1, link.source.y1, link.target.y1) + verticalMargin + link.circularPathData.verticalBuffer
             link.circularPathData.verticalLeftInnerExtent =  link.circularPathData.verticalFullExtent - link.circularPathData.leftLargeArcRadius
             link.circularPathData.verticalRightInnerExtent = link.circularPathData.verticalFullExtent - link.circularPathData.rightLargeArcRadius
@@ -1016,10 +1027,8 @@ import findCircuits from "elementary-circuits-directed-graph";
   // create a d path using the addCircularPathData
   function createCircularPathString (link) {
     var pathString = ''
-    // 'pathData' is assigned a value but never used
-    // var pathData = {}
 
-    if (link.circularLinkType == 'top') {
+    if (link.circularLinkType === 'top') {
       pathString =
         // start at the right of the source node
         'M' +
@@ -1194,8 +1203,8 @@ import findCircuits from "elementary-circuits-directed-graph";
   // sort links based on the distance between the source and tartget node columns
   // if the same, then use Y position of the source node
   function sortLinkColumnAscending (link1, link2) {
-    if (linkColumnDistance(link1) == linkColumnDistance(link2)) {
-      return link1.circularLinkType == 'bottom'
+    if (linkColumnDistance(link1) === linkColumnDistance(link2)) {
+      return link1.circularLinkType === 'bottom'
         ? sortLinkSourceYDescending(link1, link2)
         : sortLinkSourceYAscending(link1, link2)
     } else {
@@ -1243,7 +1252,7 @@ import findCircuits from "elementary-circuits-directed-graph";
     var heightFromY1ToPependicular = linkXLength(shorterLink) / Math.tan(angle)
 
     // add or subtract from longer link1's original y1, depending on the slope
-    var yPerpendicular = incline(longerLink) == 'up'
+    var yPerpendicular = incline(longerLink) === 'up'
       ? longerLink.y1 + heightFromY1ToPependicular
       : longerLink.y1 - heightFromY1ToPependicular
 
@@ -1260,7 +1269,7 @@ import findCircuits from "elementary-circuits-directed-graph";
     var heightFromY1ToPependicular = linkXLength(shorterLink) / Math.tan(angle)
 
     // add or subtract from longer link's original y1, depending on the slope
-    var yPerpendicular = incline(longerLink) == 'up'
+    var yPerpendicular = incline(longerLink) === 'up'
       ? longerLink.y1 - heightFromY1ToPependicular
       : longerLink.y1 + heightFromY1ToPependicular
 
@@ -1288,7 +1297,7 @@ import findCircuits from "elementary-circuits-directed-graph";
           columnToTest++, i++
         ) {
           graph.nodes.forEach(function (node) {
-            if (node.column == columnToTest) {
+            if (node.column === columnToTest) {
               var t = i / (numberOfColumnsToTest + 1)
 
               // Find all the points of a cubic bezier curve in javascript
@@ -1313,7 +1322,7 @@ import findCircuits from "elementary-circuits-directed-graph";
               if (linkY0AtColumn > node.y0 && linkY0AtColumn < node.y1) {
 
                 dy = node.y1 - linkY0AtColumn + 10
-                dy = node.circularLinkType == 'bottom' ? dy : -dy
+                dy = node.circularLinkType === 'bottom' ? dy : -dy
 
                 node = adjustNodeHeight(node, dy, y0, y1)
 
@@ -1321,8 +1330,8 @@ import findCircuits from "elementary-circuits-directed-graph";
                 graph.nodes.forEach(function (otherNode) {
                   // don't need to check itself or nodes at different columns
                   if (
-                    getNodeID(otherNode, id) == getNodeID(node, id) ||
-                    otherNode.column != node.column
+                    getNodeID(otherNode, id) === getNodeID(node, id) ||
+                    otherNode.column !== node.column
                   ) {
                     return
                   }
@@ -1340,8 +1349,8 @@ import findCircuits from "elementary-circuits-directed-graph";
                 graph.nodes.forEach(function (otherNode) {
                   // don't need to check itself or nodes at different columns
                   if (
-                    getNodeID(otherNode, id) == getNodeID(node, id) ||
-                    otherNode.column != node.column
+                    getNodeID(otherNode, id) === getNodeID(node, id) ||
+                    otherNode.column !== node.column
                   ) {
                     return
                   }
@@ -1358,8 +1367,8 @@ import findCircuits from "elementary-circuits-directed-graph";
                 graph.nodes.forEach(function (otherNode) {
                   // don't need to check itself or nodes at different columns
                   if (
-                    getNodeID(otherNode, id) == getNodeID(node, id) ||
-                    otherNode.column != node.column
+                    getNodeID(otherNode, id) === getNodeID(node, id) ||
+                    otherNode.column !== node.column
                   ) {
                     return
                   }
@@ -1417,7 +1426,7 @@ import findCircuits from "elementary-circuits-directed-graph";
       }
 
       var nodesSourceLinks = graph.links.filter(function (l) {
-        return getNodeID(l.source, id) == getNodeID(node, id)
+        return getNodeID(l.source, id) === getNodeID(node, id)
       })
 
       var nodeSourceLinksLength = nodesSourceLinks.length
@@ -1428,7 +1437,7 @@ import findCircuits from "elementary-circuits-directed-graph";
           // if both are not circular...
           if (!link1.circular && !link2.circular) {
             // if the target nodes are the same column, then sort by the link's target y
-            if (link1.target.column == link2.target.column) {
+            if (link1.target.column === link2.target.column) {
               return link1.y1 - link2.y1
             } else if (!sameInclines(link1, link2)) {
               // if the links slope in different directions, then sort by the link's target y
@@ -1449,9 +1458,9 @@ import findCircuits from "elementary-circuits-directed-graph";
 
           // if only one is circular, the move top links up, or bottom links down
           if (link1.circular && !link2.circular) {
-            return link1.circularLinkType == 'top' ? -1 : 1
+            return link1.circularLinkType === 'top' ? -1 : 1
           } else if (link2.circular && !link1.circular) {
-            return link2.circularLinkType == 'top' ? 1 : -1
+            return link2.circularLinkType === 'top' ? 1 : -1
           }
 
           // if both links are circular...
@@ -1459,7 +1468,7 @@ import findCircuits from "elementary-circuits-directed-graph";
             // ...and they both loop the same way (both top)
             if (
               link1.circularLinkType === link2.circularLinkType &&
-              link1.circularLinkType == 'top'
+              link1.circularLinkType === 'top'
             ) {
               // ...and they both connect to a target with same column, then sort by the target's y
               if (link1.target.column === link2.target.column) {
@@ -1470,7 +1479,7 @@ import findCircuits from "elementary-circuits-directed-graph";
               }
             } else if (
               link1.circularLinkType === link2.circularLinkType &&
-              link1.circularLinkType == 'bottom'
+              link1.circularLinkType === 'bottom'
             ) {
               // ...and they both loop the same way (both bottom)
               // ...and they both connect to a target with same column, then sort by the target's y
@@ -1482,7 +1491,7 @@ import findCircuits from "elementary-circuits-directed-graph";
               }
             } else {
               // ...and they loop around different ways, the move top up and bottom down
-              return link1.circularLinkType == 'top' ? -1 : 1
+              return link1.circularLinkType === 'top' ? -1 : 1
             }
           }
         })
@@ -1498,11 +1507,11 @@ import findCircuits from "elementary-circuits-directed-graph";
 
       // correct any circular bottom links so they are at the bottom of the node
       nodesSourceLinks.forEach(function (link, i) {
-        if (link.circularLinkType == 'bottom') {
+        if (link.circularLinkType === 'bottom') {
           var j = i + 1
           var offsetFromBottom = 0
           // sum the widths of any links that are below this link
-          for (j; j < nodeSourceLinksLength; j++) {
+          for (; j < nodeSourceLinksLength; j++) {
             offsetFromBottom = offsetFromBottom + nodesSourceLinks[j].width
           }
           link.y0 = node.y1 - offsetFromBottom - link.width / 2
@@ -1515,7 +1524,7 @@ import findCircuits from "elementary-circuits-directed-graph";
   function sortTargetLinks (graph, y1, id) {
     graph.nodes.forEach(function (node) {
       var nodesTargetLinks = graph.links.filter(function (l) {
-        return getNodeID(l.target, id) == getNodeID(node, id)
+        return getNodeID(l.target, id) === getNodeID(node, id)
       })
 
       var nodesTargetLinksLength = nodesTargetLinks.length
@@ -1524,7 +1533,7 @@ import findCircuits from "elementary-circuits-directed-graph";
         nodesTargetLinks.sort(function (link1, link2) {
           // if both are not circular, the base on the source y position
           if (!link1.circular && !link2.circular) {
-            if (link1.source.column == link2.source.column) {
+            if (link1.source.column === link2.source.column) {
               return link1.y0 - link2.y0
             } else if (!sameInclines(link1, link2)) {
               return link1.y0 - link2.y0
@@ -1545,9 +1554,9 @@ import findCircuits from "elementary-circuits-directed-graph";
 
           // if only one is circular, the move top links up, or bottom links down
           if (link1.circular && !link2.circular) {
-            return link1.circularLinkType == 'top' ? -1 : 1
+            return link1.circularLinkType === 'top' ? -1 : 1
           } else if (link2.circular && !link1.circular) {
-            return link2.circularLinkType == 'top' ? 1 : -1
+            return link2.circularLinkType === 'top' ? 1 : -1
           }
 
           // if both links are circular...
@@ -1555,7 +1564,7 @@ import findCircuits from "elementary-circuits-directed-graph";
             // ...and they both loop the same way (both top)
             if (
               link1.circularLinkType === link2.circularLinkType &&
-              link1.circularLinkType == 'top'
+              link1.circularLinkType === 'top'
             ) {
               // ...and they both connect to a target with same column, then sort by the target's y
               if (link1.source.column === link2.source.column) {
@@ -1566,7 +1575,7 @@ import findCircuits from "elementary-circuits-directed-graph";
               }
             } else if (
               link1.circularLinkType === link2.circularLinkType &&
-              link1.circularLinkType == 'bottom'
+              link1.circularLinkType === 'bottom'
             ) {
               // ...and they both loop the same way (both bottom)
               // ...and they both connect to a target with same column, then sort by the target's y
@@ -1578,7 +1587,7 @@ import findCircuits from "elementary-circuits-directed-graph";
               }
             } else {
               // ...and they loop around different ways, the move top up and bottom down
-              return link1.circularLinkType == 'top' ? -1 : 1
+              return link1.circularLinkType === 'top' ? -1 : 1
             }
           }
         })
@@ -1594,11 +1603,11 @@ import findCircuits from "elementary-circuits-directed-graph";
 
       // correct any circular bottom links so they are at the bottom of the node
       nodesTargetLinks.forEach(function (link, i) {
-        if (link.circularLinkType == 'bottom') {
+        if (link.circularLinkType === 'bottom') {
           var j = i + 1
           var offsetFromBottom = 0
           // sum the widths of any links that are below this link
-          for (j; j < nodesTargetLinksLength; j++) {
+          for (; j < nodesTargetLinksLength; j++) {
             offsetFromBottom = offsetFromBottom + nodesTargetLinks[j].width
           }
           link.y1 = node.y1 - offsetFromBottom - link.width / 2
@@ -1609,7 +1618,7 @@ import findCircuits from "elementary-circuits-directed-graph";
 
   // test if links both slope up, or both slope down
   function sameInclines (link1, link2) {
-    return incline(link1) == incline(link2)
+    return incline(link1) === incline(link2)
   }
 
   // returns the slope of a link, from source to target
@@ -1621,7 +1630,7 @@ import findCircuits from "elementary-circuits-directed-graph";
 
   // check if link is self linking, ie links a node to the same node
   function selfLinking (link, id) {
-    return getNodeID(link.source, id) == getNodeID(link.target, id)
+    return getNodeID(link.source, id) === getNodeID(link.target, id)
   }
 
   function fillHeight(graph, y0, y1) {
@@ -1633,14 +1642,14 @@ import findCircuits from "elementary-circuits-directed-graph";
     var bottom = false
 
     links.forEach(function(link){
-      if (link.circularLinkType == "top") {
+      if (link.circularLinkType === "top") {
         top = true
-      } else if (link.circularLinkType == "bottom") {
+      } else if (link.circularLinkType === "bottom") {
         bottom = true
       }
     })
 
-    if (top == false || bottom == false) {
+    if (top === false || bottom === false) {
       var minY0 = min(nodes, function(node){ return node.y0 })
       var maxY1 = max(nodes, function(node){ return node.y1 })
       var currentHeight = maxY1 - minY0
@@ -1663,20 +1672,14 @@ import findCircuits from "elementary-circuits-directed-graph";
   }
 
   function resolveNodesOverlap(graph, y0, py){
-    var columns = nest()
-      .key(function (d) {
-        return d.column
-      })
-      .sortKeys(ascending)
-      .entries(graph.nodes)
-      .map(function (d) {
-        return d.values
-      })
+    var columns = Array.from(group(graph.nodes, function (d) { return d.column }))
+      .sort(function (a, b) { return ascending(a[0], b[0]) })
+      .map(function (d) { return d[1] })
 
       columns.forEach(function (nodes) {
         var node, dy, y = y0, n = nodes.length, i
         // Push any overlapping nodes down.
-        nodes.sort(ascendingBreadth)
+        nodes.sort(ascendingBreadthModule)
 
         for (i = 0; i < n; ++i) {
           node = nodes[i]
@@ -1693,5 +1696,6 @@ import findCircuits from "elementary-circuits-directed-graph";
             })
           }
           y = node.y1 + py
-        }})
+        }
+      })
   }

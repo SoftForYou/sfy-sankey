@@ -59,7 +59,7 @@
       .attr("width", function (d) { return d.x1 - d.x0; })
       .style("fill", function (d) { return nodeColour(d.x0); })
       .style("opacity", 0.5)
-      .on("mouseover", function (d) {
+      .on("mouseover", function (event, d) {
 
         let thisName = d.name;
 
@@ -78,7 +78,7 @@
             return highlightNodes(d, thisName)
           })
       })
-      .on("mouseout", function (d) {
+      .on("mouseout", function (event, d) {
         d3.selectAll("rect").style("opacity", 0.5);
         d3.selectAll(".sankey-link").style("opacity", 0.7);
         d3.selectAll("text").style("opacity", 1);

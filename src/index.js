@@ -1,10 +1,10 @@
 export {
   default as sankeyCircular,
-  addCircularPathData,
+  addCircularPathData
 } from "./sankeyCircular.js";
 export {
   center as sankeyCenter,
   left as sankeyLeft,
   right as sankeyRight,
-  justify as sankeyJustify,
+  justify as sankeyJustify
 } from "./align";
